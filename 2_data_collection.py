@@ -11,13 +11,14 @@ options = Options()
 options.add_argument("--headless")
 driver = webdriver.Chrome(options=options)
 
-df = pd.read_csv("pokemons.csv")
+df = pd.read_csv("pokemons.csv", encoding="utf-8-sig")
 data = []
-
 
 def safe_get_text(element):
     return element.get_text(strip=True) if element else None
 
+def clean_key(key):
+    return key.strip().replace('\n', ' ').replace('\t', ' ').replace('  ', ' ')
 
 def extract_fields(soup):
     fields = {}
@@ -35,49 +36,37 @@ def extract_fields(soup):
         label = row.select_one(".pi-data-label")
         value = row.select_one(".pi-data-value")
         if label and value:
-            fields[safe_get_text(label)] = safe_get_text(value)
+            key = clean_key(safe_get_text(label))
+            val = safe_get_text(value)
+            fields[key] = val
 
     for group in card.select(".pi-smart-group"):
-        group_header = group.select_one(".pi-smart-group-head")
-        header_text = safe_get_text(group_header)
-
-        group_body = group.select_one(".pi-smart-group-body")
-        if not group_body:
-            continue
-
-        labels = group_body.select(".pi-smart-data-value[data-item-name='pi-data-label simple']")
-        values = group_body.select(".pi-smart-data-value:not([data-item-name='pi-data-label simple'])")
+        labels = group.select(".pi-smart-data-label")
+        values = group.select(".pi-smart-data-value")
 
         if labels and values and len(labels) == len(values):
             for label, value in zip(labels, values):
-                fields[safe_get_text(label)] = safe_get_text(value)
+                key = clean_key(safe_get_text(label))
+                val = safe_get_text(value)
+                fields[key] = val
         else:
+            group_header = group.select_one(".pi-smart-group-head")
+            header_text = safe_get_text(group_header)
             if header_text:
-                fields[header_text] = safe_get_text(group_body)
+                value_texts = [safe_get_text(val) for val in values if safe_get_text(val)]
+                fields[header_text] = " / ".join(value_texts)
 
-    type_section = card.find(lambda tag: tag.name == "h3" and "Тип(-ы)" in tag.text)
-    if type_section:
-        type_value = safe_get_text(type_section.find_next(".pi-smart-group-body"))
-        if type_value:
-            fields["Тип"] = type_value
+    def extract_field_by_header(text, label):
+        section = card.find(lambda tag: tag.name == "h3" and text in tag.text)
+        if section:
+            value = safe_get_text(section.find_next(".pi-smart-group-body") or section.find_next(".pi-smart-data-value"))
+            if value:
+                fields[label] = value.strip()
 
-    gender_section = card.find(lambda tag: tag.name == "h3" and "Пол" in tag.text)
-    if gender_section:
-        gender_value = safe_get_text(gender_section.find_next(".pi-smart-group-body"))
-        if gender_value:
-            fields["Пол"] = gender_value.replace("\n", " ").strip()
-
-    height_section = card.find(lambda tag: tag.name == "h3" and "Рост" in tag.text)
-    if height_section:
-        height_value = safe_get_text(height_section.find_next(".pi-smart-data-value"))
-        if height_value:
-            fields["Рост"] = height_value
-
-    weight_section = card.find(lambda tag: tag.name == "h3" and "Вес" in tag.text)
-    if weight_section:
-        weight_value = safe_get_text(weight_section.find_next(".pi-smart-data-value"))
-        if weight_value:
-            fields["Вес"] = weight_value
+    extract_field_by_header("Тип", "Тип")
+    extract_field_by_header("Пол", "Пол")
+    extract_field_by_header("Рост", "Рост")
+    extract_field_by_header("Вес", "Вес")
 
     evolution_sections = card.find_all(lambda tag: tag.name == "div" and "Эволюция" in tag.text)
     for section in evolution_sections:
@@ -89,16 +78,13 @@ def extract_fields(soup):
 
     return fields
 
-
 for i, row in df.iterrows():
     name = row["name"]
     url = row["link"]
 
     try:
         driver.get(url)
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.TAG_NAME, "body"))
-        )
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         time.sleep(1.5)
         soup = BeautifulSoup(driver.page_source, "html.parser")
 
@@ -110,15 +96,15 @@ for i, row in df.iterrows():
         print(f"{i + 1}/{len(df)}: {name} — найдено {len(fields)} характеристик")
 
     except Exception as e:
-        print(f"Ошибка при обработке {name}: {str(e)}")
+        print(f"[Ошибка] {name}: {str(e)}")
         continue
 
-    if i % 20 == 0 and i != 0:
-        pd.DataFrame(data).to_csv("backup_pokemon_data.csv", index=False)
+    if i % 10 == 0 and i != 0:
+        pd.DataFrame(data).to_csv("backup_pokemon_data.csv", index=False, encoding="utf-8-sig")
         print("Резервное сохранение")
 
 driver.quit()
 
 df_out = pd.DataFrame(data)
-df_out.to_csv("pokemon_data.csv", index=False)
+df_out.to_csv("pokemon_data.csv", index=False, encoding="utf-8-sig")
 print("Готово. Данные сохранены в pokemon_data.csv")
